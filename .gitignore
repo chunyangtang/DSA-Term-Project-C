@@ -1,5 +1,4 @@
 # Created by .ignore support plugin (hsz.mobi)
-.DS_Store
 ### Python template
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -151,10 +150,7 @@ crashlytics.properties
 crashlytics-build.properties
 fabric.properties
 
-data
-dataset
-public_data
+# dataset
 exp
-tmp
-stu
-assets
+# assets
+.DS_Store

@@ -31,6 +31,7 @@ class Runner:
         self.conf = ConfigFactory.parse_string(conf_text)
         self.conf['dataset.data_dir'] = self.conf['dataset.data_dir'].replace('CASE_NAME', case)
         self.base_exp_dir = self.conf['general.base_exp_dir']
+        self.checkpoint_dir = self.conf['general.checkpoint_dir']
         os.makedirs(self.base_exp_dir, exist_ok=True)
         self.dataset = Dataset(self.conf['dataset'], self.device)
         self.iter_step = 0
@@ -47,14 +48,15 @@ class Runner:
         self.my_nerf = MyNeRF()
         self.renderer = MyNerfRenderer(self.my_nerf,
                                      **self.conf['model.nerf_renderer'])
-        self.load_checkpoint(r'D:\share\WYT-C\nerf_ds\stu\nerf_model.pth', absolute=True)
+        self.load_checkpoint(r'./nerf_model.pth', absolute=False)
 
 
     def load_checkpoint(self, checkpoint_name, absolute=False):
         if absolute:
             checkpoint = torch.load(checkpoint_name, map_location=self.device)
         else:
-            checkpoint = torch.load(os.path.join(self.base_exp_dir, 'checkpoints', checkpoint_name), map_location=self.device)
+            # checkpoint = torch.load(os.path.join(self.base_exp_dir, 'checkpoints', checkpoint_name), map_location=self.device)
+            checkpoint = torch.load(os.path.join(self.checkpoint_dir, checkpoint_name), map_location=self.device)
         self.coarse_nerf.load_state_dict(checkpoint['coarse_nerf'])
         self.fine_nerf.load_state_dict(checkpoint['fine_nerf'])
         logging.info('End')
