@@ -151,6 +151,6 @@ crashlytics-build.properties
 fabric.properties
 
 # dataset
-exp
+# exp
 # assets
 .DS_Store
