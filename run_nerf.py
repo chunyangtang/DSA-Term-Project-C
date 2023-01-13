@@ -58,7 +58,6 @@ class Runner:
         if absolute:
             checkpoint = torch.load(checkpoint_name, map_location=self.device)
         else:
-            # checkpoint = torch.load(os.path.join(self.base_exp_dir, 'checkpoints', checkpoint_name), map_location=self.device)
             checkpoint = torch.load(os.path.join(
                 self.checkpoint_dir, checkpoint_name), map_location=self.device)
         self.coarse_nerf.load_state_dict(checkpoint['coarse_nerf'])
@@ -107,7 +106,7 @@ class Runner:
                 print('NO VALID CHECKPOINT, GENERATED A NEW ONE')
         else:
             for i in range(RS):
-                for j in range(RS):
+                for j in tqdm(range(RS)):
                     pts_xyz[:, i, j, 0] = torch.linspace(-0.125, 0.125, RS)
                     pts_xyz[i, :, j, 1] = torch.linspace(0.75, 1.0, RS)
                     pts_xyz[i, j, :, 2] = torch.linspace(-0.125, 0.125, RS)
@@ -116,7 +115,7 @@ class Runner:
 
             sigma = torch.zeros((RS*RS*RS, 1))
             color = torch.zeros((RS*RS*RS, 3))
-            for batch in range(0, pts_xyz.shape[0], batch_size):
+            for batch in tqdm(range(0, pts_xyz.shape[0], batch_size)):
                 batch_pts_xyz = pts_xyz[batch:batch+batch_size]
                 net_sigma, net_color = self.fine_nerf(
                     batch_pts_xyz, torch.zeros_like(batch_pts_xyz))
@@ -129,98 +128,63 @@ class Runner:
         images = []
         resolution_level = 1
         n_frames = 90
-        if not timecompare_mode:
-            for idx in tqdm(range(n_frames)):
-                rays_o, rays_d = self.dataset.gen_rays_at(
-                    idx, resolution_level=resolution_level)
-                H, W, _ = rays_o.shape
-                rays_o = rays_o.reshape(-1, 3).split(1024)
-                rays_d = rays_d.reshape(-1, 3).split(1024)
+        for idx in tqdm(range(n_frames)):
+            rays_o, rays_d = self.dataset.gen_rays_at(
+                idx, resolution_level=resolution_level)
+            H, W, _ = rays_o.shape
+            rays_o = rays_o.reshape(-1, 3).split(1024)
+            rays_d = rays_d.reshape(-1, 3).split(1024)
 
-                out_rgb_fine = []
+            out_rgb_fine = []
 
-                for rays_o_batch, rays_d_batch in tqdm(zip(rays_o, rays_d)):
-                    near, far = self.dataset.near_far_from_sphere(
-                        rays_o_batch, rays_d_batch)
-                    background_rgb = torch.ones(
-                        [1, 3], device=self.device) if self.use_white_bkgd else None
+            for rays_o_batch, rays_d_batch in tqdm(zip(rays_o, rays_d)):
+                near, far = self.dataset.near_far_from_sphere(
+                    rays_o_batch, rays_d_batch)
+                background_rgb = torch.ones(
+                    [1, 3], device=self.device) if self.use_white_bkgd else None
 
-                    render_out = self.renderer.render(rays_o_batch,
-                                                      rays_d_batch,
-                                                      near,
-                                                      far,
-                                                      background_rgb=background_rgb)
+                render_out = self.renderer.render(rays_o_batch,
+                                                    rays_d_batch,
+                                                    near,
+                                                    far,
+                                                    background_rgb=background_rgb)
 
-                    def feasible(key): return (key in render_out) and (
-                        render_out[key] is not None)
+                def feasible(key): return (key in render_out) and (
+                    render_out[key] is not None)
 
-                    if feasible('fine_color'):
-                        out_rgb_fine.append(
-                            render_out['fine_color'].detach().cpu().numpy())
+                if feasible('fine_color'):
+                    out_rgb_fine.append(
+                        render_out['fine_color'].detach().cpu().numpy())
 
-                    del render_out
+                del render_out
 
-                img_fine = (np.concatenate(out_rgb_fine, axis=0).reshape(
-                    [H, W, 3]) * 256).clip(0, 255)
-                img_fine = cv.resize(cv.flip(img_fine, 0), (512, 512))
-                images.append(img_fine)
+            img_fine = (np.concatenate(out_rgb_fine, axis=0).reshape(
+                [H, W, 3]) * 256).clip(0, 255)
+            img_fine = cv.resize(cv.flip(img_fine, 0), (512, 512))
+            images.append(img_fine)
+            if not timecompare_mode:
                 os.makedirs(os.path.join(
                     self.base_exp_dir, 'render'), exist_ok=True)
                 cv.imwrite(os.path.join(self.base_exp_dir,  'render',
                                         '{}.jpg'.format(idx)), img_fine)
+            else:
+                os.makedirs(os.path.join(
+                    self.base_exp_dir, 'render_compare'), exist_ok=True)
+                cv.imwrite(os.path.join(self.base_exp_dir,  'render_compare',
+                                        '{}_{}.jpg'.format(filename, idx)), img_fine)
 
-            fourcc = cv.VideoWriter_fourcc(*'mp4v')
-            h, w, _ = images[0].shape
+        fourcc = cv.VideoWriter_fourcc(*'mp4v')
+        h, w, _ = images[0].shape
+        if not timecompare_mode:
             writer = cv.VideoWriter(os.path.join(self.base_exp_dir,  'render', 'show.mp4'),
-                                    fourcc, 30, (w, h))
-            for image in tqdm(images):
-                image = image.astype(np.uint8)
-                writer.write(image)
-            writer.release()
+                            fourcc, 30, (w, h))
         else:
-            for idx in range(n_frames):
-                rays_o, rays_d = self.dataset.gen_rays_at(
-                    idx, resolution_level=resolution_level)
-                H, W, _ = rays_o.shape
-                rays_o = rays_o.reshape(-1, 3).split(1024)
-                rays_d = rays_d.reshape(-1, 3).split(1024)
-
-                out_rgb_fine = []
-
-                for rays_o_batch, rays_d_batch in zip(rays_o, rays_d):
-                    near, far = self.dataset.near_far_from_sphere(
-                        rays_o_batch, rays_d_batch)
-                    background_rgb = torch.ones(
-                        [1, 3], device=self.device) if self.use_white_bkgd else None
-
-                    render_out = self.renderer.render(rays_o_batch,
-                                                      rays_d_batch,
-                                                      near,
-                                                      far,
-                                                      background_rgb=background_rgb)
-
-                    def feasible(key): return (key in render_out) and (
-                        render_out[key] is not None)
-
-                    if feasible('fine_color'):
-                        out_rgb_fine.append(
-                            render_out['fine_color'].detach().cpu().numpy())
-
-                    del render_out
-
-                img_fine = (np.concatenate(out_rgb_fine, axis=0).reshape(
-                    [H, W, 3]) * 256).clip(0, 255)
-                img_fine = cv.resize(cv.flip(img_fine, 0), (512, 512))
-                images.append(img_fine)
-
-            fourcc = cv.VideoWriter_fourcc(*'mp4v')
-            h, w, _ = images[0].shape
             writer = cv.VideoWriter(os.path.join(self.base_exp_dir,  'render_compare', '{}.mp4'.format(filename)),
-                                    fourcc, 30, (w, h))
-            for image in images:
-                image = image.astype(np.uint8)
-                writer.write(image)
-            writer.release()
+                            fourcc, 30, (w, h))
+        for image in tqdm(images):
+            image = image.astype(np.uint8)
+            writer.write(image)
+        writer.release()
 
     def render_image(self, idx=0):
         """
@@ -296,11 +260,6 @@ class Runner:
         """
         Compare the time of rendering using different methods.
         """
-        # Removing potential checkpoints
-        # if os.path.isfile("checkpoints/sigma_color.pth"):
-        #     os.remove("checkpoints/sigma_color.pth")
-        # if os.path.isfile("checkpoints/sigma_color_save.pth"):
-        #     os.remove("checkpoints/sigma_color_save.pth")
         # Rendering using NeRF
         start = time.time()
         self.use_nerf()
