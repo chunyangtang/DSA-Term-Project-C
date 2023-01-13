@@ -12,7 +12,7 @@
             "console": "integratedTerminal",
             "args": [
                 "--mode",
-                "mcube",
+                "time_compare",
                 "--conf",
                 "confs/nerf.conf",
                 "--case",
