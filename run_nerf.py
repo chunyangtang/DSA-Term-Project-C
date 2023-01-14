@@ -70,8 +70,8 @@ class Runner:
                                        **self.conf['model.nerf_renderer'])
 
     def save(self, timecompare_mode=False):
-        RS = 128
-        pts_xyz = torch.zeros((RS, RS, RS, 3))
+        RS = 512
+        pts_xyz = torch.zeros((RS, RS, RS, 3), device=self.device)
         if not timecompare_mode:
             for i in tqdm(range(RS)):
                 for j in range(RS):
@@ -83,14 +83,14 @@ class Runner:
             # load from the disk if exists
             try:
                 checkpoint = torch.load("checkpoints/sigma_color.pth")
-                sigma = checkpoint["sigma"]
-                color = checkpoint["color"]
+                sigma = checkpoint["sigma"].to(self.device)
+                color = checkpoint["color"].to(self.device)
                 assert sigma.shape == (RS*RS*RS, 1)
                 print('CHECKPOINT LOADED, sigma ',
                       sigma.shape, 'color', color.shape)
             except:
-                sigma = torch.zeros((RS*RS*RS, 1))
-                color = torch.zeros((RS*RS*RS, 3))
+                sigma = torch.zeros((RS*RS*RS, 1), device=self.device)
+                color = torch.zeros((RS*RS*RS, 3), device=self.device)
                 for batch in tqdm(range(0, pts_xyz.shape[0], batch_size)):
                     batch_pts_xyz = pts_xyz[batch:batch+batch_size]
                     net_sigma, net_color = self.fine_nerf(
@@ -105,16 +105,16 @@ class Runner:
                 torch.save(checkpoint, "checkpoints/sigma_color.pth")
                 print('NO VALID CHECKPOINT, GENERATED A NEW ONE')
         else:
-            for i in range(RS):
-                for j in tqdm(range(RS)):
+            for i in tqdm(range(RS)):
+                for j in range(RS):
                     pts_xyz[:, i, j, 0] = torch.linspace(-0.125, 0.125, RS)
                     pts_xyz[i, :, j, 1] = torch.linspace(0.75, 1.0, RS)
                     pts_xyz[i, j, :, 2] = torch.linspace(-0.125, 0.125, RS)
             pts_xyz = pts_xyz.reshape((RS*RS*RS, 3))
             batch_size = 1024
 
-            sigma = torch.zeros((RS*RS*RS, 1))
-            color = torch.zeros((RS*RS*RS, 3))
+            sigma = torch.zeros((RS*RS*RS, 1), device=self.device)
+            color = torch.zeros((RS*RS*RS, 3), device=self.device)
             for batch in tqdm(range(0, pts_xyz.shape[0], batch_size)):
                 batch_pts_xyz = pts_xyz[batch:batch+batch_size]
                 net_sigma, net_color = self.fine_nerf(
@@ -267,11 +267,11 @@ class Runner:
         end = time.time()
         print('Time of Nerual Rendering: {}s'.format(end - start))
         # Rendering using Voxels
-        start = time.time()
-        self.save(timecompare_mode=True)
-        self.render_video(timecompare_mode=True, filename='voxel')
-        end = time.time()
-        print('Time of Voxel Rendering: {}s'.format(end - start))
+        # start = time.time()
+        # self.save(timecompare_mode=True)
+        # self.render_video(timecompare_mode=True, filename='voxel')
+        # end = time.time()
+        # print('Time of Voxel Rendering: {}s'.format(end - start))
 
 
 if __name__ == '__main__':
