@@ -12,7 +12,7 @@
             "console": "integratedTerminal",
             "args": [
                 "--mode",
-                "time_compare",
+                "render",
                 "--conf",
                 "confs/nerf.conf",
                 "--case",

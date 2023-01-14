@@ -15,6 +15,7 @@ from models.fields import NeRF
 from models.my_dataset import Dataset
 from models.my_nerf import MyNeRF, CheatNeRF
 from models.my_renderer import MyNerfRenderer
+from models.hashbase_renderer import HashbaseRenderer
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'True'
 
 
@@ -70,7 +71,7 @@ class Runner:
                                        **self.conf['model.nerf_renderer'])
 
     def save(self, timecompare_mode=False):
-        RS = 512
+        RS = 128
         pts_xyz = torch.zeros((RS, RS, RS, 3), device=self.device)
         if not timecompare_mode:
             for i in tqdm(range(RS)):
@@ -124,10 +125,35 @@ class Runner:
 
         self.my_nerf.save(pts_xyz, sigma, color)
 
-    def render_video(self, timecompare_mode=False, filename='show'):
+    def render_video(self, timecompare_mode=False, filename='show', optimized_mode=False):
         images = []
         resolution_level = 1
         n_frames = 90
+        # prerender 30 frames to build a hashtable
+        if optimized_mode:
+            prerender_frames = 30
+            self.renderer = HashbaseRenderer(self.my_nerf, **self.conf['model.nerf_renderer'])
+            for i in tqdm(range(0, 90, 90 // prerender_frames)):
+                rays_o, rays_d = self.dataset.gen_rays_at(
+                    idx, resolution_level=resolution_level)
+                H, W, _ = rays_o.shape
+                rays_o = rays_o.reshape(-1, 3).split(1024)
+                rays_d = rays_d.reshape(-1, 3).split(1024)
+
+                out_rgb_fine = []
+
+                for rays_o_batch, rays_d_batch in tqdm(zip(rays_o, rays_d)):
+                    near, far = self.dataset.near_far_from_sphere(
+                        rays_o_batch, rays_d_batch)
+                    background_rgb = torch.ones(
+                        [1, 3], device=self.device) if self.use_white_bkgd else None
+
+                    render_out = self.renderer.hashtable_insert(rays_o_batch,
+                                                                rays_d_batch,
+                                                                near,
+                                                                far,
+                                                                background_rgb=background_rgb)
+        # real video rendering
         for idx in tqdm(range(n_frames)):
             rays_o, rays_d = self.dataset.gen_rays_at(
                 idx, resolution_level=resolution_level)
@@ -304,3 +330,6 @@ if __name__ == '__main__':
         runner.mcube(args.mcube_threshold)
     elif args.mode == 'time_compare':
         runner.time_compare()
+    elif args.mode == 'optimized_render':
+        runner.save()
+        runner.render_video(filename='hash', optimized_mode=True)
