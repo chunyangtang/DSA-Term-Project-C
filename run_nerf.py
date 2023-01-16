@@ -131,9 +131,10 @@ class Runner:
         n_frames = 90
         # prerender 30 frames to build a hashtable
         if optimized_mode:
-            prerender_frames = 30
-            self.renderer = HashbaseRenderer(self.my_nerf, **self.conf['model.nerf_renderer'])
-            for i in tqdm(range(0, 90, 90 // prerender_frames)):
+            print("Building hashtable...")
+            prerender_frames = 15
+            self.renderer = HashbaseRenderer(self.my_nerf, self.fine_nerf, **self.conf['model.nerf_renderer'])
+            for idx in tqdm(range(0, 90, 90 // prerender_frames)):
                 rays_o, rays_d = self.dataset.gen_rays_at(
                     idx, resolution_level=resolution_level)
                 H, W, _ = rays_o.shape
@@ -154,6 +155,7 @@ class Runner:
                                                                 far,
                                                                 background_rgb=background_rgb)
         # real video rendering
+        print("Video rendering...")
         for idx in tqdm(range(n_frames)):
             rays_o, rays_d = self.dataset.gen_rays_at(
                 idx, resolution_level=resolution_level)
