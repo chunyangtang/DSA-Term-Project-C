@@ -73,14 +73,15 @@ class Runner:
     def save(self, timecompare_mode=False):
         RS = 128
         pts_xyz = torch.zeros((RS, RS, RS, 3), device=self.device)
+        for i in tqdm(range(RS)):
+            for j in range(RS):
+                pts_xyz[:, i, j, 0] = torch.linspace(-0.125, 0.125, RS)
+                pts_xyz[i, :, j, 1] = torch.linspace(0.75, 1.0, RS)
+                pts_xyz[i, j, :, 2] = torch.linspace(-0.125, 0.125, RS)
+        pts_xyz = pts_xyz.reshape((RS*RS*RS, 3))
+        batch_size = 1024
+        # skip the checkpoint loading if in timecompare mode
         if not timecompare_mode:
-            for i in tqdm(range(RS)):
-                for j in range(RS):
-                    pts_xyz[:, i, j, 0] = torch.linspace(-0.125, 0.125, RS)
-                    pts_xyz[i, :, j, 1] = torch.linspace(0.75, 1.0, RS)
-                    pts_xyz[i, j, :, 2] = torch.linspace(-0.125, 0.125, RS)
-            pts_xyz = pts_xyz.reshape((RS*RS*RS, 3))
-            batch_size = 1024
             # load from the disk if exists
             try:
                 checkpoint = torch.load("checkpoints/sigma_color.pth")
@@ -106,14 +107,6 @@ class Runner:
                 torch.save(checkpoint, "checkpoints/sigma_color.pth")
                 print('NO VALID CHECKPOINT, GENERATED A NEW ONE')
         else:
-            for i in tqdm(range(RS)):
-                for j in range(RS):
-                    pts_xyz[:, i, j, 0] = torch.linspace(-0.125, 0.125, RS)
-                    pts_xyz[i, :, j, 1] = torch.linspace(0.75, 1.0, RS)
-                    pts_xyz[i, j, :, 2] = torch.linspace(-0.125, 0.125, RS)
-            pts_xyz = pts_xyz.reshape((RS*RS*RS, 3))
-            batch_size = 1024
-
             sigma = torch.zeros((RS*RS*RS, 1), device=self.device)
             color = torch.zeros((RS*RS*RS, 3), device=self.device)
             for batch in tqdm(range(0, pts_xyz.shape[0], batch_size)):
@@ -132,7 +125,8 @@ class Runner:
         # prerender 30 frames to build a hashtable
         if optimized_mode:
             print("Building hashtable...")
-            prerender_frames = 15
+            prerender_frames = 30
+            # replace the renderer
             self.renderer = HashbaseRenderer(self.my_nerf, self.fine_nerf, **self.conf['model.nerf_renderer'])
             for idx in tqdm(range(0, 90, 90 // prerender_frames)):
                 rays_o, rays_d = self.dataset.gen_rays_at(
@@ -203,12 +197,8 @@ class Runner:
 
         fourcc = cv.VideoWriter_fourcc(*'mp4v')
         h, w, _ = images[0].shape
-        if not timecompare_mode:
-            writer = cv.VideoWriter(os.path.join(self.base_exp_dir,  'render', 'show.mp4'),
-                            fourcc, 30, (w, h))
-        else:
-            writer = cv.VideoWriter(os.path.join(self.base_exp_dir,  'render_compare', '{}.mp4'.format(filename)),
-                            fourcc, 30, (w, h))
+        writer = cv.VideoWriter(os.path.join(self.base_exp_dir,  'render_compare', '{}.mp4'.format(filename)),
+                        fourcc, 30, (w, h))
         for image in tqdm(images):
             image = image.astype(np.uint8)
             writer.write(image)
@@ -216,7 +206,7 @@ class Runner:
 
     def render_image(self, idx=0):
         """
-        Render an image at a given index in the dataset.
+        Render a single image at a given index in the dataset.
         """
         resolution_level = 1
         rays_o, rays_d = self.dataset.gen_rays_at(
@@ -287,8 +277,9 @@ class Runner:
     def time_compare(self, idx=0, threshold=0.0):
         """
         Compare the time of rendering using different methods.
+        Outputs are stored at self.base_exp_dir/render_compare
         """
-        # Rendering using NeRF
+        # Rendering using NeRF, can use cuda to accelerate
         start = time.time()
         self.use_nerf()
         self.render_video(timecompare_mode=True, filename='neural')
@@ -310,7 +301,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--conf', type=str, default='./confs/base.conf')
     parser.add_argument('--mode', type=str, default='render')
-    parser.add_argument('--mcube_threshold', type=float, default=0.0)
+    parser.add_argument('--mcube_threshold', type=float, default=0.0) # marching cube的阈值
     parser.add_argument('--is_continue', default=False, action="store_true")
     parser.add_argument('--case', type=str, default='')
     parser.add_argument('--dataroot', type=str, default='')
@@ -324,14 +315,16 @@ if __name__ == '__main__':
     elif args.mode == 'test':
         runner.use_nerf()
         runner.render_video()
-    elif args.mode == 'mcube':
+    elif args.mode == 'mcube':  # marching cube 后保存为obj文件
         runner.save()
         runner.mcube_save(args.mcube_threshold)
-    elif args.mode == 'mcube_show':
+    elif args.mode == 'mcube_show': # marching cube 后调用trimesh显示，保存为obj文件
         runner.save()
         runner.mcube(args.mcube_threshold)
-    elif args.mode == 'time_compare':
+    elif args.mode == 'time_compare': # 对比神经/体素渲染的时间
         runner.time_compare()
-    elif args.mode == 'optimized_render':
+    elif args.mode == 'optimized_render': # 经过哈希表优化后的渲染
+        # 先保存128*128*128的体素
         runner.save()
+        # 再渲染（包含虚拟渲染建立哈希表和实际渲染）
         runner.render_video(filename='hash', optimized_mode=True)

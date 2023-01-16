@@ -4,9 +4,10 @@ import torch.nn.functional as F
 import numpy as np
 from models.my_renderer import sample_pdf
 
-BOX_OFFSETS = torch.tensor([[[i,j,k] for i in [0, 1] for j in [0, 1] for k in [0, 1]]])
+N = 512 # 用于pts的坐标变换
+LOG2_HASH_SIZE = 30 # hash表的大小
 
-class HashbaseRenderer:
+class HashbaseRenderer: # similar to MyNerfRenderer
     def __init__(self,
                  my_nerf,
                  fine_nerf, 
@@ -18,10 +19,10 @@ class HashbaseRenderer:
         self.n_samples = n_samples
         self.n_importance = n_importance
         self.perturb = perturb
-        self.hashtable = HashTable(log2_hashmap_size=32)
+        self.hashtable = HashTable(log2_hashmap_size=LOG2_HASH_SIZE)
 
     def hashtable_insert(self, rays_o, rays_d, near, far, background_rgb=None):
-        # Doing render just as the real rendering
+        # Doing the original rendering
         batch_size = len(rays_o)
         z_vals = torch.linspace(0.0, 1.0, self.n_samples, device=rays_o.device)
         z_vals = near + (far - near) * z_vals[None, :]
@@ -42,6 +43,7 @@ class HashbaseRenderer:
 
             sigma, sampled_color = self.my_nerf.query(pts)
             # sigma, sampled_color = self.fine_nerf(pts, torch.zeros_like(pts))
+
             sigma = sigma.reshape(batch_size, n_samples)
             sampled_color = sampled_color.reshape(batch_size, n_samples, 3)
             
@@ -87,14 +89,15 @@ class HashbaseRenderer:
             sampled_color = sampled_color.reshape(-1, 3)
             sigma = sigma.reshape(-1, 1)
 
-            sigma, sampled_color = self.fine_nerf(pts, torch.zeros_like(pts))
+            # sigma, sampled_color = self.fine_nerf(pts, torch.zeros_like(pts))
 
-            self.N = 512
-            pts = (pts * 4 * self.N).long()
+            pts = (pts * 4 * N).long()
 
+            # insert into the hashtable
             self.hashtable[pts] = [sampled_color, sigma]
 
     def render(self, rays_o, rays_d, near, far, background_rgb=None):
+        # Doing the original rendering
         batch_size = len(rays_o)
         sample_dist = 2.0 / self.n_samples   # Assuming the region of interest is a unit sphere
         z_vals = torch.linspace(0.0, 1.0, self.n_samples, device=rays_o.device)
@@ -135,19 +138,19 @@ class HashbaseRenderer:
             n_samples = self.n_samples + self.n_importance
             pts = rays_o[:, None, :] + rays_d[:, None, :] * z_vals[..., :, None]
             dirs = rays_d[:, None, :].expand(pts.shape)
+
+            # reshape to help process the points
             pts = pts.reshape(-1, 3)
             dirs = dirs.reshape(-1, 3)
 
-            self.N = 512
-            # pts1 = pts + 0.125
-            # pts1[:, 1] = pts1[:, 1] - 0.875
-            # pts1 = (pts1 * 4 * self.N).clamp(0, self.N-1).long()
-            pts1 = (pts * 4 * self.N).long()
+            pts1 = (pts * 4 * N).long() # scaling points xyz to hash
 
             [sampled_color, sigma] = self.hashtable[pts1]
 
+            # Complete the missing points
+            # 1. Find the points from the 128^3 grid
             sigma1, sampled_color1 = self.my_nerf.query(pts)
-
+            # 2. Find the points have not been inserted into the hashtable and replace them
             sigma_mask = sigma == -1
             sigma[sigma_mask] = sigma1[sigma_mask]
             sigma_mask = sigma_mask.reshape(-1).expand(3, -1).permute(1, 0)
@@ -177,9 +180,9 @@ class HashbaseRenderer:
 
 
 class HashTable():
-    def __init__(self, log2_hashmap_size=32):
+    def __init__(self, log2_hashmap_size=LOG2_HASH_SIZE):
         self.log2_hashmap_size = log2_hashmap_size
-        self.buckets = [-torch.ones([2**log2_hashmap_size, 3]), -torch.ones([2**log2_hashmap_size, 1])]
+        self.buckets = [-torch.ones([2**log2_hashmap_size, 3]), -torch.ones([2**log2_hashmap_size, 1])] # color, sigma
 
     def hash(self, coords, log2_hashmap_size):
         '''
@@ -196,15 +199,17 @@ class HashTable():
 
     def __getitem__(self, search_key):
         index = self.hash(search_key, self.log2_hashmap_size)
-
         return [self.buckets[0][index], self.buckets[1][index]]
 
     def __setitem__(self, key, value):
         index = self.hash(key, self.log2_hashmap_size)
 
+        # update the value only if the bucket is empty
         mask = (self.buckets[1][index] == -1).squeeze()
         index = index[mask]
         self.buckets[0][index] = value[0][mask]
         self.buckets[1][index] = value[1][mask]
+
+        # or update the value even if the bucket is not empty
         # self.buckets[0][index] = value[0]
         # self.buckets[1][index] = value[1]
