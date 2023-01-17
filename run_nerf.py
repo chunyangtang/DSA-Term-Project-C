@@ -6,6 +6,7 @@ import numpy as np
 import cv2 as cv
 import trimesh
 import mcubes
+from skimage import measure
 import torch
 import torch.nn.functional as F
 from icecream import ic
@@ -21,8 +22,8 @@ os.environ['KMP_DUPLICATE_LIB_OK'] = 'True'
 
 class Runner:
     def __init__(self, conf_path, mode='render', case='CASE_NAME', is_continue=False):
-        self.device = torch.device('cpu')
-        # self.device = torch.device('cuda:0')
+        # self.device = torch.device('cpu')
+        self.device = torch.device('cuda:0')
 
         # Configuration
         self.conf_path = conf_path
@@ -91,14 +92,15 @@ class Runner:
                 print('CHECKPOINT LOADED, sigma ',
                       sigma.shape, 'color', color.shape)
             except:
-                sigma = torch.zeros((RS*RS*RS, 1), device=self.device)
-                color = torch.zeros((RS*RS*RS, 3), device=self.device)
-                for batch in tqdm(range(0, pts_xyz.shape[0], batch_size)):
-                    batch_pts_xyz = pts_xyz[batch:batch+batch_size]
-                    net_sigma, net_color = self.fine_nerf(
-                        batch_pts_xyz, torch.zeros_like(batch_pts_xyz))
-                    sigma[batch:batch+batch_size] = net_sigma
-                    color[batch:batch+batch_size] = net_color
+                with torch.no_grad():
+                    sigma = torch.zeros((RS*RS*RS, 1), device=self.device)
+                    color = torch.zeros((RS*RS*RS, 3), device=self.device)
+                    for batch in tqdm(range(0, pts_xyz.shape[0], batch_size)):
+                        batch_pts_xyz = pts_xyz[batch:batch+batch_size]
+                        net_sigma, net_color = self.fine_nerf(
+                            batch_pts_xyz, torch.zeros_like(batch_pts_xyz))
+                        sigma[batch:batch+batch_size] = net_sigma
+                        color[batch:batch+batch_size] = net_color
                 # save to the disk
                 checkpoint = {
                     "sigma": sigma,
@@ -127,7 +129,7 @@ class Runner:
             print("Building hashtable...")
             prerender_frames = 30
             # replace the renderer
-            self.renderer = HashbaseRenderer(self.my_nerf, self.fine_nerf, **self.conf['model.nerf_renderer'])
+            self.renderer = HashbaseRenderer(self.my_nerf, self.fine_nerf, self.device,  **self.conf['model.nerf_renderer'])
 
             for idx in tqdm(range(0, 90, 90 // prerender_frames)):
                 rays_o, rays_d = self.dataset.gen_rays_at(
@@ -144,11 +146,11 @@ class Runner:
                     background_rgb = torch.ones(
                         [1, 3], device=self.device) if self.use_white_bkgd else None
                     # render and save to hashtable
-                    render_out = self.renderer.hashtable_insert(rays_o_batch,
-                                                                rays_d_batch,
-                                                                near,
-                                                                far,
-                                                                background_rgb=background_rgb)
+                    self.renderer.hashtable_insert(rays_o_batch,
+                                                    rays_d_batch,
+                                                    near,
+                                                    far,
+                                                    background_rgb=background_rgb)
         # real video rendering
         print("Video rendering...")
         for idx in tqdm(range(n_frames)):
@@ -198,7 +200,11 @@ class Runner:
 
         fourcc = cv.VideoWriter_fourcc(*'mp4v')
         h, w, _ = images[0].shape
-        writer = cv.VideoWriter(os.path.join(self.base_exp_dir,  'render_compare', '{}.mp4'.format(filename)),
+        if not timecompare_mode:
+            writer = cv.VideoWriter(os.path.join(self.base_exp_dir,  'render', '{}.mp4'.format(filename)),
+                        fourcc, 30, (w, h))
+        else:
+            writer = cv.VideoWriter(os.path.join(self.base_exp_dir,  'render_compare', '{}.mp4'.format(filename)),
                         fourcc, 30, (w, h))
         for image in tqdm(images):
             image = image.astype(np.uint8)
@@ -274,6 +280,20 @@ class Runner:
         os.makedirs(os.path.join(self.base_exp_dir, 'mesh'), exist_ok=True)
         mcubes.export_obj(vertices, triangles, os.path.join(
             self.base_exp_dir, 'mesh', 'mesh.obj'))
+    def mcube_save_textured(self, threshold=0.0):
+        """
+        Run marching cube algorithm and save it as obj file.
+        """
+        # Converting sigma and color to numpy array
+        sigma = self.my_nerf.volumes_sigma.detach().cpu().numpy()
+        color = self.my_nerf.volumes_color.detach().cpu().numpy()
+        # Marching cubes using trimesh
+        verts, faces, normals, values = measure.marching_cubes(sigma, 0)
+        
+        # Save mesh
+        mesh = trimesh.Trimesh(vertices=verts, faces=faces, vertex_normals=normals, vertex_colors=color)
+
+        mesh.export(os.path.join(self.base_exp_dir, 'mesh', 'mesh_colored.obj'))
 
     def time_compare(self, idx=0, threshold=0.0):
         """
@@ -287,11 +307,13 @@ class Runner:
         end = time.time()
         print('Time of Nerual Rendering: {}s'.format(end - start))
         # Rendering using Voxels
-        # start = time.time()
-        # self.save(timecompare_mode=True)
-        # self.render_video(timecompare_mode=True, filename='voxel')
-        # end = time.time()
-        # print('Time of Voxel Rendering: {}s'.format(end - start))
+        start = time.time()
+        self.my_nerf = MyNeRF()
+        self.my_renderer = MyNerfRenderer()
+        self.save(timecompare_mode=True)
+        self.render_video(timecompare_mode=True, filename='voxel')
+        end = time.time()
+        print('Time of Voxel Rendering: {}s'.format(end - start))
 
 
 if __name__ == '__main__':
@@ -325,7 +347,13 @@ if __name__ == '__main__':
     elif args.mode == 'time_compare': # 对比神经/体素渲染的时间
         runner.time_compare()
     elif args.mode == 'optimized_render': # 经过哈希表优化后的渲染
+        start = time.time()
         # 先保存128*128*128的体素
         runner.save()
         # 再渲染（包含虚拟渲染建立哈希表和实际渲染）
         runner.render_video(filename='hash', optimized_mode=True)
+        end = time.time()
+        print('Time of Voxel Rendering Using HashTable: {}s'.format(end - start))
+    elif args.mode == 'mcube_textured':  # marching cube 并加入颜色后保存为obj文件
+        runner.save()
+        runner.mcube_save_textured(args.mcube_threshold)

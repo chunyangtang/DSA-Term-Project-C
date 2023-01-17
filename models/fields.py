@@ -62,30 +62,31 @@ class NeRF(nn.Module):
             self.output_linear = nn.Linear(W, output_ch)
 
     def forward(self, input_pts, input_views):
-        if self.embed_fn is not None:
-            input_pts = self.embed_fn(input_pts)
-            # print(input_pts)
-            # exit(0)
-        if self.embed_fn_view is not None:
-            input_views = self.embed_fn_view(input_views)
+        with torch.no_grad():
+            if self.embed_fn is not None:
+                input_pts = self.embed_fn(input_pts)
+                # print(input_pts)
+                # exit(0)
+            if self.embed_fn_view is not None:
+                input_views = self.embed_fn_view(input_views)
 
-        h = input_pts
-        for i, l in enumerate(self.pts_linears):
-            h = self.pts_linears[i](h)
-            h = F.softplus(h)
-            if i in self.skips:
-                h = torch.cat([input_pts, h], -1)
-
-        if self.use_viewdirs:
-            alpha = self.alpha_linear(h)
-            feature = self.feature_linear(h)
-            h = torch.cat([feature, input_views], -1)
-
-            for i, l in enumerate(self.views_linears):
-                h = self.views_linears[i](h)
+            h = input_pts
+            for i, l in enumerate(self.pts_linears):
+                h = self.pts_linears[i](h)
                 h = F.softplus(h)
+                if i in self.skips:
+                    h = torch.cat([input_pts, h], -1)
 
-            rgb = F.sigmoid(self.rgb_linear(h))
-            return alpha, rgb
-        else:
-            assert False
+            if self.use_viewdirs:
+                alpha = self.alpha_linear(h)
+                feature = self.feature_linear(h)
+                h = torch.cat([feature, input_views], -1)
+
+                for i, l in enumerate(self.views_linears):
+                    h = self.views_linears[i](h)
+                    h = F.softplus(h)
+
+                rgb = F.sigmoid(self.rgb_linear(h))
+                return alpha, rgb
+            else:
+                assert False
