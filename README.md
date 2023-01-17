@@ -4,16 +4,20 @@ This is a term project for the course Data Structures which aims to optimize the
 
 ## 文件改动介绍
 - run_nerf.py: 
-    1. 在文件末尾的运行mode进行了扩充，对应每个任务
-    2. 对save、render_video 函数调整，以使其在不同模式下使用
-    3. 加入每个模式所用到的新的函数
+    1. checkpoint的加载改为相对路径模式，更换环境后无需修改
+    2. 在文件末尾的运行mode进行了扩充，对应每个任务
+    3. 对save、render_video 函数调整，以使其在不同模式下使用
+    4. 加入每个模式所用到的新的函数
 
 - models/hashbase_renderer.py
-    1. 该文件中定义的新renderer与原始的renderer功能基本一致
+    1. 该文件中定义的新renderer起替代原始的renderer功能的作用
     2. 新renderer包含虚拟渲染时的插入哈希表过程与实际渲染时查询哈希表过程
     3. 该文件中也定义了一个HashTable类用于哈希表的存储与读写
 
-
+经哈希表改进后的渲染命令为
+```bash
+python run_nerf.py --mode optimized_render --conf confs/nerf.conf --case test
+```
 
 # 以下是原始所给代码的介绍
 ## 依赖库

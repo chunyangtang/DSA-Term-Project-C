@@ -128,6 +128,7 @@ class Runner:
             prerender_frames = 30
             # replace the renderer
             self.renderer = HashbaseRenderer(self.my_nerf, self.fine_nerf, **self.conf['model.nerf_renderer'])
+
             for idx in tqdm(range(0, 90, 90 // prerender_frames)):
                 rays_o, rays_d = self.dataset.gen_rays_at(
                     idx, resolution_level=resolution_level)
@@ -142,7 +143,7 @@ class Runner:
                         rays_o_batch, rays_d_batch)
                     background_rgb = torch.ones(
                         [1, 3], device=self.device) if self.use_white_bkgd else None
-
+                    # render and save to hashtable
                     render_out = self.renderer.hashtable_insert(rays_o_batch,
                                                                 rays_d_batch,
                                                                 near,
