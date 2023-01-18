@@ -14,10 +14,24 @@ This is a term project for the course Data Structures which aims to optimize the
     2. 新renderer包含虚拟渲染时的插入哈希表过程与实际渲染时查询哈希表过程
     3. 该文件中也定义了一个HashTable类用于哈希表的存储与读写
 
-经哈希表改进后的渲染命令为
+## 代码运行方式
+对基础体素数据的几何重建（可补充--mcube_threshold * 控制sigma的阈值，默认即可）
+```bash
+python run_nerf.py --mode mcube --conf confs/nerf.conf --case test
+```
+对比神经渲染与基础体素渲染
+```bash
+python run_nerf.py --mode time_compare --conf confs/nerf.conf --case test
+```
+经哈希表改进后的渲染
 ```bash
 python run_nerf.py --mode optimized_render --conf confs/nerf.conf --case test
 ```
+用哈希方法改进后的几何重建（可补充--mcube_threshold * 控制sigma的阈值，默认即可）
+```bash
+python run_nerf.py --mode mcube_hash --conf confs/nerf.conf --case test
+```
+
 
 # 以下是原始所给代码的介绍
 ## 依赖库

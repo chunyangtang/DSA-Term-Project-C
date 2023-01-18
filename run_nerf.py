@@ -6,7 +6,6 @@ import numpy as np
 import cv2 as cv
 import trimesh
 import mcubes
-from skimage import measure
 import torch
 import torch.nn.functional as F
 from icecream import ic
@@ -211,46 +210,68 @@ class Runner:
             writer.write(image)
         writer.release()
 
-    def render_image(self, idx=0):
+    # def render_image(self, idx=0):
+    #     """
+    #     Render a single image at a given index in the dataset, literally the same with render_video.
+    #     """
+    #     resolution_level = 1
+    #     rays_o, rays_d = self.dataset.gen_rays_at(
+    #         idx, resolution_level=resolution_level)
+    #     H, W, _ = rays_o.shape
+    #     rays_o = rays_o.reshape(-1, 3).split(1024)
+    #     rays_d = rays_d.reshape(-1, 3).split(1024)
+
+    #     out_rgb_fine = []
+
+    #     for rays_o_batch, rays_d_batch in zip(rays_o, rays_d):
+    #         near, far = self.dataset.near_far_from_sphere(
+    #             rays_o_batch, rays_d_batch)
+    #         background_rgb = torch.ones(
+    #             [1, 3], device=self.device) if self.use_white_bkgd else None
+
+    #         render_out = self.renderer.render(rays_o_batch,
+    #                                           rays_d_batch,
+    #                                           near,
+    #                                           far,
+    #                                           background_rgb=background_rgb)
+
+    #         def feasible(key): return (key in render_out) and (
+    #             render_out[key] is not None)
+
+    #         if feasible('fine_color'):
+    #             out_rgb_fine.append(
+    #                 render_out['fine_color'].detach().cpu().numpy())
+
+    #         del render_out
+
+    #     img_fine = (np.concatenate(out_rgb_fine, axis=0).reshape(
+    #         [H, W, 3]) * 256).clip(0, 255)
+    #     img_fine = cv.resize(cv.flip(img_fine, 0), (512, 512))
+    #     os.makedirs(os.path.join(self.base_exp_dir, 'render'), exist_ok=True)
+    #     cv.imwrite(os.path.join(self.base_exp_dir,  'render',
+    #                'custom_angle', '{}.jpg'.format(idx)), img_fine)
+
+
+    def time_compare(self, idx=0, threshold=0.0):
         """
-        Render a single image at a given index in the dataset.
+        Compare the time of rendering using different methods.
+        Outputs are stored at self.base_exp_dir/render_compare
         """
-        resolution_level = 1
-        rays_o, rays_d = self.dataset.gen_rays_at(
-            idx, resolution_level=resolution_level)
-        H, W, _ = rays_o.shape
-        rays_o = rays_o.reshape(-1, 3).split(1024)
-        rays_d = rays_d.reshape(-1, 3).split(1024)
-
-        out_rgb_fine = []
-
-        for rays_o_batch, rays_d_batch in zip(rays_o, rays_d):
-            near, far = self.dataset.near_far_from_sphere(
-                rays_o_batch, rays_d_batch)
-            background_rgb = torch.ones(
-                [1, 3], device=self.device) if self.use_white_bkgd else None
-
-            render_out = self.renderer.render(rays_o_batch,
-                                              rays_d_batch,
-                                              near,
-                                              far,
-                                              background_rgb=background_rgb)
-
-            def feasible(key): return (key in render_out) and (
-                render_out[key] is not None)
-
-            if feasible('fine_color'):
-                out_rgb_fine.append(
-                    render_out['fine_color'].detach().cpu().numpy())
-
-            del render_out
-
-        img_fine = (np.concatenate(out_rgb_fine, axis=0).reshape(
-            [H, W, 3]) * 256).clip(0, 255)
-        img_fine = cv.resize(cv.flip(img_fine, 0), (512, 512))
-        os.makedirs(os.path.join(self.base_exp_dir, 'render'), exist_ok=True)
-        cv.imwrite(os.path.join(self.base_exp_dir,  'render',
-                   'custom_angle', '{}.jpg'.format(idx)), img_fine)
+        # Rendering using NeRF, can use cuda to accelerate
+        start = time.time()
+        self.use_nerf()
+        self.render_video(timecompare_mode=True, filename='neural')
+        end = time.time()
+        print('Time of Nerual Rendering: {}s'.format(end - start))
+        # Rendering using Voxels
+        start = time.time()
+        self.my_nerf = MyNeRF()
+        self.renderer = MyNerfRenderer(self.my_nerf,
+                                       **self.conf['model.nerf_renderer'])
+        self.save(timecompare_mode=True)
+        self.render_video(timecompare_mode=True, filename='voxel')
+        end = time.time()
+        print('Time of Voxel Rendering: {}s'.format(end - start))
 
     def mcube_save(self, threshold=0.0):
         """
@@ -280,37 +301,33 @@ class Runner:
         os.makedirs(os.path.join(self.base_exp_dir, 'mesh'), exist_ok=True)
         mcubes.export_obj(vertices, triangles, os.path.join(
             self.base_exp_dir, 'mesh', 'mesh.obj'))
+
+
     def mcube_hash(self, threshold=0.0):
         """
         Run marching cube algorithm and save it as obj file.
         """
-        # 保存128*128*128的体素
-        runner.save()
-        # 渲染（包含虚拟渲染建立哈希表和实际渲染）
-        runner.render_video(filename='hash', optimized_mode=True)
-        # 导出点并保存点云文件
-        points = self.renderer.export_ply(os.path.join(self.base_exp_dir,  'mesh', 'points_detailed.ply'))
+        # THIS IS THE 1ST METHOD -- USING POINTS CLOUD TO MARCHING CUBES
+        # NOTICE TO ALSO MODIFY CODE IN hashbase_renderer.py TO USE THIS METHOD (in class HashTable & function export_ply)
+        # # 导出点并保存点云文件
+        # points, points_detailed = self.renderer.export_ply(os.path.join(self.base_exp_dir,  'mesh'))
+        # points = points.detach().cpu().numpy()
+        # points_detailed = points_detailed.detach().cpu().numpy()
+        # # 使用Marching Cube算法提取网格并导出
+        # mesh = trimesh.voxel.ops.points_to_marching_cubes(points, 0.002)
+        # mesh_detailed = trimesh.voxel.ops.points_to_marching_cubes(points_detailed, 0.002)
+        # mesh.export(os.path.join(self.base_exp_dir, 'mesh', 'mesh_128.obj'))
+        # mesh_detailed.export(os.path.join(self.base_exp_dir, 'mesh', 'mesh_detailed.obj'))
 
-    def time_compare(self, idx=0, threshold=0.0):
-        """
-        Compare the time of rendering using different methods.
-        Outputs are stored at self.base_exp_dir/render_compare
-        """
-        # Rendering using NeRF, can use cuda to accelerate
-        start = time.time()
-        self.use_nerf()
-        self.render_video(timecompare_mode=True, filename='neural')
-        end = time.time()
-        print('Time of Nerual Rendering: {}s'.format(end - start))
-        # Rendering using Voxels
-        start = time.time()
-        self.my_nerf = MyNeRF()
-        self.renderer = MyNerfRenderer(self.my_nerf,
-                                       **self.conf['model.nerf_renderer'])
-        self.save(timecompare_mode=True)
-        self.render_video(timecompare_mode=True, filename='voxel')
-        end = time.time()
-        print('Time of Voxel Rendering: {}s'.format(end - start))
+        # THIS IS THE 2ND METHOD -- USING THE SIGMA VALUES TO MARCHING CUBES
+        # NOTICE TO ALSO MODIFY CODE IN hashbase_renderer.py TO USE THIS METHOD (in class HashTable)
+        # retrieve the sigmas from the hashtable object
+        sigmas = self.renderer.hashtable.points_sigma.detach().cpu().numpy()
+        # Marching cubes
+        vertices, triangles = mcubes.marching_cubes(sigmas, threshold)
+        mcubes.export_obj(vertices, triangles, os.path.join(
+                            self.base_exp_dir, 'mesh', 'mesh_detailed_sigma.obj'))
+
 
 
 if __name__ == '__main__':
@@ -352,5 +369,9 @@ if __name__ == '__main__':
         end = time.time()
         print('Time of Voxel Rendering Using HashTable: {}s'.format(end - start))
     elif args.mode == 'mcube_hash':  # 将哈希表示的点导出并marching cube，保存为obj文件
+        # 保存128*128*128的体素
         runner.save()
-        runner.mcube_hash(args.mcube_threshold)
+        # 渲染（包含虚拟渲染建立哈希表和实际渲染）
+        runner.render_video(filename='hash', optimized_mode=True)
+        # marching cube
+        runner.mcube_hash(threshold=args.mcube_threshold)

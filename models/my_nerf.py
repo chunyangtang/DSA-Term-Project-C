@@ -45,36 +45,4 @@ class MyNeRF():
         color[:, :] = self.volumes_color[X_index, Y_index, Z_index]
 
         return sigma, color
-
-    def export_points(self, filename):
-        # get useful points
-        sigma_mask = self.volumes_sigma > 0.5
-        points = torch.where(sigma_mask)
-        points = torch.stack(points, dim=1).float()
-        # export to a .ply file
-        with open(filename, 'w') as f:
-            f.writelines((
-                    "ply\n",
-                    "format ascii 1.0\n",
-                    "element vertex {}\n".format(points.shape[0]),
-                    "property float x\n",
-                    "property float y\n",
-                    "property float z\n",
-                    # "property uchar red\n",
-                    # "property uchar green\n",
-                    # "property uchar blue\n",
-                    "end_header\n"))
-            for i in tqdm(range(points.shape[0])):
-                f.writelines((
-                    "{} {} {}\n".format(
-                        points[i, 0] / self.N / 4 - 0.125,
-                        points[i, 1] / self.N / 4 + 0.75,
-                        points[i, 2] / self.N / 4 - 0.125),
-                    # "{} {} {}\n".format(
-                    #     self.volumes_color[points[i, 0], points[i, 1], points[i, 2], 0],
-                    #     self.volumes_color[points[i, 0], points[i, 1], points[i, 2], 1],
-                    #     self.volumes_color[points[i, 0], points[i, 1], points[i, 2], 2]),
-                ))
-
-
             

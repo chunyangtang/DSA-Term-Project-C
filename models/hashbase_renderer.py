@@ -1,3 +1,4 @@
+import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -22,7 +23,7 @@ class HashbaseRenderer: # similar to MyNerfRenderer
         self.n_samples = n_samples
         self.n_importance = n_importance
         self.perturb = perturb
-        self.hashtable = HashTable(device, log2_hashmap_size=LOG2_HASH_SIZE)
+        self.hashtable = HashTable(device, self.my_nerf.volumes_sigma, log2_hashmap_size=LOG2_HASH_SIZE)
 
     def hashtable_insert(self, rays_o, rays_d, near, far, background_rgb=None):
         with torch.no_grad():
@@ -45,7 +46,6 @@ class HashbaseRenderer: # similar to MyNerfRenderer
                 pts = pts.reshape(-1, 3)
                 dirs = dirs.reshape(-1, 3)
 
-                # sigma, sampled_color = self.my_nerf.query(pts)
                 sigma, sampled_color = self.fine_nerf(pts, torch.zeros_like(pts))
 
                 sigma = sigma.reshape(batch_size, n_samples)
@@ -59,7 +59,8 @@ class HashbaseRenderer: # similar to MyNerfRenderer
                 coarse_color = (sampled_color * coarse_weights[:, :, None]).sum(dim=1)
                 if background_rgb is not None:
                     coarse_color = coarse_color + background_rgb * (1.0 - coarse_weights.sum(dim=-1, keepdim=True))
-
+                
+                # # ---
                 # with torch.no_grad():
                 #     new_z_vals = sample_pdf(z_vals, coarse_weights, self.n_importance, det=True).detach()
                 # z_vals = torch.cat([z_vals, new_z_vals], dim=-1)
@@ -68,7 +69,9 @@ class HashbaseRenderer: # similar to MyNerfRenderer
                 # n_samples = self.n_samples + self.n_importance
                 # pts = rays_o[:, None, :] + rays_d[:, None, :] * z_vals[..., :, None]
                 # dirs = rays_d[:, None, :].expand(pts.shape)
+                # # ---
 
+                # --- Replace the above code to use only the points of details
                 with torch.no_grad():
                     z_vals = sample_pdf(z_vals, coarse_weights, self.n_importance, det=True).detach()
                 z_vals, index = torch.sort(z_vals, dim=-1)
@@ -76,11 +79,11 @@ class HashbaseRenderer: # similar to MyNerfRenderer
                 n_samples = self.n_importance
                 pts = rays_o[:, None, :] + rays_d[:, None, :] * z_vals[..., :, None]
                 dirs = rays_d[:, None, :].expand(pts.shape)
+                # ---
 
                 pts = pts.reshape(-1, 3)
                 dirs = dirs.reshape(-1, 3)
 
-                # sigma, sampled_color = self.my_nerf.query(pts)
                 sigma, sampled_color = self.fine_nerf(pts, torch.zeros_like(pts))
 
                 # reshape to help select points of the surface
@@ -92,7 +95,7 @@ class HashbaseRenderer: # similar to MyNerfRenderer
                 sigma_mask = torch.sum(sigma>=400 ,dim=1)
                 sigma_mask = (sigma_mask > (n_samples*3//4))
 
-                # sigma_mask = (sigma >= 400).reshape(-1)
+                # sigma_mask = (sigma >= 400).reshape(-1) # Can replace the above 2 lines, but quality is worse
 
                 sigma = sigma[sigma_mask]
                 sampled_color = sampled_color[sigma_mask]
@@ -104,7 +107,8 @@ class HashbaseRenderer: # similar to MyNerfRenderer
                 sigma = sigma.reshape(-1, 1)
 
                 # select points of the surface of the object
-                sigma_mask = (sigma >= 400).reshape(-1)
+                sigma_mask = ((sigma >= 400)*(sigma <= 800)).reshape(-1)
+                # sigma_mask = (sigma >= 400).reshape(-1) # More details but more noise
                 sigma = sigma[sigma_mask]
                 sampled_color = sampled_color[sigma_mask]
                 pts = pts[sigma_mask]
@@ -203,47 +207,82 @@ class HashbaseRenderer: # similar to MyNerfRenderer
             'z_vals': z_vals,
         }
 
-    def export_ply(self, filename):
-        points1 = self.hashtable.points
-        sigma_mask = self.my_nerf.volumes_sigma > 0.5
-        points2 = torch.where(sigma_mask)
-        points2 = torch.stack(points2, dim=1)
-        points2 *= 4 
+    # --- USED IN THE 1ST IMPLEMENTATION OF MARCHING CUBES
+    # def export_ply(self, filepath):
+    #     # retrieve the inserted points from the hashtable
+    #     points1 = self.hashtable.points
+    #     # retrieve the points from the 128^3 grid
+    #     sigma_mask = (self.my_nerf.volumes_sigma > 0.5)
+    #     points2 = torch.where(sigma_mask)
+    #     points2 = torch.stack(points2, dim=1)
+    #     points2 *= 4
+    #     # combine the two sets of points
+    #     points = torch.cat([points1, points2], dim=0)
+    #     points = torch.unique(points, dim=0).half()
+    #     # scale the points to their original positions
+    #     points[:, 0] = points[:, 0] / N / 4 - 0.125
+    #     points[:, 1] = points[:, 1] / N / 4 + 0.75
+    #     points[:, 2] = points[:, 2] / N / 4 - 0.125
 
-        points = torch.cat([points1, points2], dim=0)
-        points = torch.unique(points, dim=0).half()
+    #     # export basic points to a .ply file
+    #     points2 = points2.half()
+    #     with open(os.path.join(filepath, 'points_128.ply'), 'w') as f:
+    #         f.writelines((
+    #                 "ply\n",
+    #                 "format ascii 1.0\n",
+    #                 "element vertex {}\n".format(points2.shape[0]),
+    #                 "property float x\n",
+    #                 "property float y\n",
+    #                 "property float z\n",
+    #                 "end_header\n"))
+    #         for i in tqdm(range(points2.shape[0])):
+    #             f.writelines((
+    #                 "{} {} {}\n".format(
+    #                     points2[i, 0] / N / 4 - 0.125,
+    #                     points2[i, 1] / N / 4 + 0.75,
+    #                     points2[i, 2] / N / 4 - 0.125),
+    #             ))
+    #     # export hashtable & voxel points to a .ply file
+    #     with open(os.path.join(filepath, 'points_detailed.ply'), 'w') as f:
+    #         f.writelines((
+    #                 "ply\n",
+    #                 "format ascii 1.0\n",
+    #                 "element vertex {}\n".format(points.shape[0]),
+    #                 "property float x\n",
+    #                 "property float y\n",
+    #                 "property float z\n",
+    #                 "end_header\n"))
+    #         for i in tqdm(range(points.shape[0])):
+    #             f.writelines((
+    #                 "{} {} {}\n".format(
+    #                     points[i, 0],
+    #                     points[i, 1],
+    #                     points[i, 2])
+    #             ))
 
-        points[:, 0] = points[:, 0] / N / 4 - 0.125
-        points[:, 1] = points[:, 1] / N / 4 + 0.75
-        points[:, 2] = points[:, 2] / N / 4 - 0.125
+    #     # return basic points and detailed points
+    #     return points2, points
 
-        # export to a .ply file
-        with open(filename, 'w') as f:
-            f.writelines((
-                    "ply\n",
-                    "format ascii 1.0\n",
-                    "element vertex {}\n".format(points.shape[0]),
-                    "property float x\n",
-                    "property float y\n",
-                    "property float z\n",
-                    "end_header\n"))
-            for i in tqdm(range(points.shape[0])):
-                f.writelines((
-                    "{} {} {}\n".format(
-                        points[i, 0],
-                        points[i, 1],
-                        points[i, 2])
-                ))
-        
-        return points
-
+    # ---
 
 class HashTable():
-    def __init__(self, device, log2_hashmap_size=LOG2_HASH_SIZE):
+    def __init__(self, device, sigmas, log2_hashmap_size=LOG2_HASH_SIZE):
         self.device = device
         self.log2_hashmap_size = log2_hashmap_size
-        self.points = torch.tensor([], device=self.device).int()
+
         self.buckets = [-torch.ones([2**log2_hashmap_size, 3], device=self.device), -torch.ones([2**log2_hashmap_size, 1], device=self.device)] # color, sigma
+
+        # USED IN THE 1ST IMPLEMENTATION OF MARCHING CUBES
+        # self.points = torch.tensor([], device=self.device).int()
+
+        # --- USED IN THE 2ND IMPELEMENTATION OF MARCHING CUBES
+        # 这里的代码不够灵活（如用到N、sigmas.shape等增加通用性），改变参数需注意
+        self.points_sigma = -torch.ones((512, 512, 512), device=self.device).float()
+        for i in tqdm(range(sigmas.shape[0])):
+            for j in range(sigmas.shape[1]):
+                for k in range(sigmas.shape[2]):
+                    self.points_sigma[4*i: 4*i+4, 4*j: 4*j+4, 4*k: 4*k+4] = sigmas[i, j, k].item()
+        # ---
 
     def hash(self, coords, log2_hashmap_size):
         '''
@@ -265,14 +304,15 @@ class HashTable():
     def __setitem__(self, key, value):
         index = self.hash(key, self.log2_hashmap_size)
 
-        # update the value only if the bucket is empty
+        # update the value only if the bucket is empty or it's not black
         mask = ((self.buckets[1][index] == -1) + (self.buckets[1][index] != 0)).squeeze().to(self.device)
         index = index[mask]
         self.buckets[0][index] = value[0][mask].to(self.device)
         self.buckets[1][index] = value[1][mask].to(self.device)
 
-        self.points = torch.cat([self.points, key[mask]], dim=0)
+        # USED IN THE 1ST IMPLEMENTATION OF MARCHING CUBES
+        # self.points = torch.cat([self.points, key[mask]], dim=0)
 
-        # or update the value even if the bucket is not empty
-        # self.buckets[0][index] = value[0]
-        # self.buckets[1][index] = value[1]
+        # USED IN THE 2ND IMPLEMENTATION OF MARCHING CUBES
+        self.points_sigma[key[mask][:, 0], key[mask][:, 1], key[mask][:, 2]] = value[1][mask].squeeze().to(self.device)
+
