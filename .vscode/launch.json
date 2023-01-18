@@ -13,7 +13,7 @@
             "console": "integratedTerminal",
             "args": [
                 "--mode",
-                "optimized_render",
+                "mcube_textured",
                 "--conf",
                 "confs/nerf.conf",
                 "--case",

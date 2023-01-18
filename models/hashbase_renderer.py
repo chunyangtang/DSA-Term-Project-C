@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
+from tqdm import tqdm
 from models.my_renderer import sample_pdf
 
 N = 512 # 用于pts的坐标变换
@@ -102,10 +103,16 @@ class HashbaseRenderer: # similar to MyNerfRenderer
                 sampled_color = sampled_color.reshape(-1, 3)
                 sigma = sigma.reshape(-1, 1)
 
+                # select points of the surface of the object
+                sigma_mask = (sigma >= 400).reshape(-1)
+                sigma = sigma[sigma_mask]
+                sampled_color = sampled_color[sigma_mask]
+                pts = pts[sigma_mask]
+
                 pts[:, 0] += 0.125
                 pts[:, 1] -= 0.75
                 pts[:, 2] += 0.125
-                pts = (pts * 4 * N).long()
+                pts = (pts * 4 * N).clamp(0, N-1).long()
 
                 # insert into the hashtable
                 self.hashtable[pts] = [sampled_color, sigma]
@@ -161,7 +168,7 @@ class HashbaseRenderer: # similar to MyNerfRenderer
             pts1[:, 0] += 0.125
             pts1[:, 1] -= 0.75
             pts1[:, 2] += 0.125
-            pts1 = (pts1 * 4 * N).long() # scaling points xyz to hash
+            pts1 = (pts1 * 4 * N).clamp(0, N-1).long() # scaling points xyz to hash
 
             [sampled_color, sigma] = self.hashtable[pts1]
 
@@ -196,11 +203,46 @@ class HashbaseRenderer: # similar to MyNerfRenderer
             'z_vals': z_vals,
         }
 
+    def export_ply(self, filename):
+        points1 = self.hashtable.points
+        sigma_mask = self.my_nerf.volumes_sigma > 0.5
+        points2 = torch.where(sigma_mask)
+        points2 = torch.stack(points2, dim=1)
+        points2 *= 4 
+
+        points = torch.cat([points1, points2], dim=0)
+        points = torch.unique(points, dim=0).half()
+
+        points[:, 0] = points[:, 0] / N / 4 - 0.125
+        points[:, 1] = points[:, 1] / N / 4 + 0.75
+        points[:, 2] = points[:, 2] / N / 4 - 0.125
+
+        # export to a .ply file
+        with open(filename, 'w') as f:
+            f.writelines((
+                    "ply\n",
+                    "format ascii 1.0\n",
+                    "element vertex {}\n".format(points.shape[0]),
+                    "property float x\n",
+                    "property float y\n",
+                    "property float z\n",
+                    "end_header\n"))
+            for i in tqdm(range(points.shape[0])):
+                f.writelines((
+                    "{} {} {}\n".format(
+                        points[i, 0],
+                        points[i, 1],
+                        points[i, 2])
+                ))
+        
+        return points
+
 
 class HashTable():
     def __init__(self, device, log2_hashmap_size=LOG2_HASH_SIZE):
         self.device = device
         self.log2_hashmap_size = log2_hashmap_size
+        self.points = torch.tensor([], device=self.device).int()
         self.buckets = [-torch.ones([2**log2_hashmap_size, 3], device=self.device), -torch.ones([2**log2_hashmap_size, 1], device=self.device)] # color, sigma
 
     def hash(self, coords, log2_hashmap_size):
@@ -228,6 +270,8 @@ class HashTable():
         index = index[mask]
         self.buckets[0][index] = value[0][mask].to(self.device)
         self.buckets[1][index] = value[1][mask].to(self.device)
+
+        self.points = torch.cat([self.points, key[mask]], dim=0)
 
         # or update the value even if the bucket is not empty
         # self.buckets[0][index] = value[0]

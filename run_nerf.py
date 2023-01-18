@@ -280,20 +280,16 @@ class Runner:
         os.makedirs(os.path.join(self.base_exp_dir, 'mesh'), exist_ok=True)
         mcubes.export_obj(vertices, triangles, os.path.join(
             self.base_exp_dir, 'mesh', 'mesh.obj'))
-    def mcube_save_textured(self, threshold=0.0):
+    def mcube_hash(self, threshold=0.0):
         """
         Run marching cube algorithm and save it as obj file.
         """
-        # Converting sigma and color to numpy array
-        sigma = self.my_nerf.volumes_sigma.detach().cpu().numpy()
-        color = self.my_nerf.volumes_color.detach().cpu().numpy()
-        # Marching cubes using trimesh
-        verts, faces, normals, values = measure.marching_cubes(sigma, 0)
-        
-        # Save mesh
-        mesh = trimesh.Trimesh(vertices=verts, faces=faces, vertex_normals=normals, vertex_colors=color)
-
-        mesh.export(os.path.join(self.base_exp_dir, 'mesh', 'mesh_colored.obj'))
+        # 保存128*128*128的体素
+        runner.save()
+        # 渲染（包含虚拟渲染建立哈希表和实际渲染）
+        runner.render_video(filename='hash', optimized_mode=True)
+        # 导出点并保存点云文件
+        points = self.renderer.export_ply(os.path.join(self.base_exp_dir,  'mesh', 'points_detailed.ply'))
 
     def time_compare(self, idx=0, threshold=0.0):
         """
@@ -309,7 +305,8 @@ class Runner:
         # Rendering using Voxels
         start = time.time()
         self.my_nerf = MyNeRF()
-        self.my_renderer = MyNerfRenderer()
+        self.renderer = MyNerfRenderer(self.my_nerf,
+                                       **self.conf['model.nerf_renderer'])
         self.save(timecompare_mode=True)
         self.render_video(timecompare_mode=True, filename='voxel')
         end = time.time()
@@ -354,6 +351,6 @@ if __name__ == '__main__':
         runner.render_video(filename='hash', optimized_mode=True)
         end = time.time()
         print('Time of Voxel Rendering Using HashTable: {}s'.format(end - start))
-    elif args.mode == 'mcube_textured':  # marching cube 并加入颜色后保存为obj文件
+    elif args.mode == 'mcube_hash':  # 将哈希表示的点导出并marching cube，保存为obj文件
         runner.save()
-        runner.mcube_save_textured(args.mcube_threshold)
+        runner.mcube_hash(args.mcube_threshold)
