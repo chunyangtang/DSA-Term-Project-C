@@ -177,7 +177,7 @@ class HashbaseRenderer: # similar to MyNerfRenderer
             [sampled_color, sigma] = self.hashtable[pts1]
 
             # Complete the missing points
-            # 1. Find the points from the 128^3 grid
+            # 1. Retrieve the points from the 128^3 grid
             sigma1, sampled_color1 = self.my_nerf.query(pts)
             # 2. Find the points have not been inserted into the hashtable and replace them
             sigma_mask = sigma == -1
@@ -270,13 +270,14 @@ class HashTable():
         self.device = device
         self.log2_hashmap_size = log2_hashmap_size
 
-        self.buckets = [-torch.ones([2**log2_hashmap_size, 3], device=self.device), -torch.ones([2**log2_hashmap_size, 1], device=self.device)] # color, sigma
+        self.buckets = [-torch.ones([2**log2_hashmap_size, 3], device=self.device), 
+                        -torch.ones([2**log2_hashmap_size, 1], device=self.device)] # color, sigma
 
         # USED IN THE 1ST IMPLEMENTATION OF MARCHING CUBES
         # self.points = torch.tensor([], device=self.device).int()
 
         # --- USED IN THE 2ND IMPELEMENTATION OF MARCHING CUBES
-        # 这里的代码不够灵活（如用到N、sigmas.shape等增加通用性），改变参数需注意
+        # 这里的代码可以使用N、sigmas.shape等增加通用性，当前应注意改变参数同时修改这里的代码
         self.points_sigma = -torch.ones((512, 512, 512), device=self.device).float()
         for i in tqdm(range(sigmas.shape[0])):
             for j in range(sigmas.shape[1]):

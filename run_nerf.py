@@ -316,6 +316,7 @@ class Runner:
         # # 使用Marching Cube算法提取网格并导出
         # mesh = trimesh.voxel.ops.points_to_marching_cubes(points, 0.002)
         # mesh_detailed = trimesh.voxel.ops.points_to_marching_cubes(points_detailed, 0.002)
+        # os.makedirs(os.path.join(self.base_exp_dir, 'mesh'), exist_ok=True)
         # mesh.export(os.path.join(self.base_exp_dir, 'mesh', 'mesh_128.obj'))
         # mesh_detailed.export(os.path.join(self.base_exp_dir, 'mesh', 'mesh_detailed.obj'))
 
@@ -325,6 +326,7 @@ class Runner:
         sigmas = self.renderer.hashtable.points_sigma.detach().cpu().numpy()
         # Marching cubes
         vertices, triangles = mcubes.marching_cubes(sigmas, threshold)
+        os.makedirs(os.path.join(self.base_exp_dir, 'mesh'), exist_ok=True)
         mcubes.export_obj(vertices, triangles, os.path.join(
                             self.base_exp_dir, 'mesh', 'mesh_detailed_sigma.obj'))
 
